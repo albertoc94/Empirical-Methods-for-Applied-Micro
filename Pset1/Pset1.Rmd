@@ -1,0 +1,187 @@
+---
+title: "Empirical Methods for Applied Micro"
+subtitle: "Problem Set 1"
+author: "Alberto Cappello"
+date: "2/1/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE, echo=FALSE}
+library(KernSmooth)
+library(mclust, quietly=TRUE)
+library(sROC)
+library(ggplot2)
+library(kdensity)
+```
+
+## Load data 
+
+```{r, echo=FALSE}
+rm(list=ls())
+data = read.csv(file="bids1.csv", header =FALSE)
+bids = data[,1]
+X = bids
+#par(mfrow = c(1, 2))
+#hist(bids,main = "Histogram with 4 intervals",breaks = 4)
+#hist(bids,main = "Histogram with 20 intervals",breaks = 20)
+```
+
+## 1. Density estimation with optimal h
+
+```{r}
+# Under assumed normal distribution
+n = length(bids)
+sd = sqrt((sd(bids) ^ 2) * ((n - 1) / n))
+# optimal bandwidth
+h_star = 1.06*sd*(n)^(-0.2)
+# Plug in rule for gaussian and epanechnikov kernel
+h_plug = dpik(X, scalest = "minim")
+kde = Vectorize(function(kernel,h) density(X,bw=h,kernel = kernel)$y)
+kernels = c("gaussian","epanechnikov")
+estimates = cbind(kde(kernels[1],h_star),kde(kernels,h_plug))
+colnames(estimates) = c("normal",kernels)
+```
+
+## 2. LSCV for Epanechnikov kernel
+
+```{r}
+# find h that minimize the Risk function
+kernel = kernels[2]
+J<- function(h){
+  fhat=Vectorize(function(x) density(X,from=x,to=x,n=1,bw=h,kernel = kernel)$y)
+  fhati=Vectorize(function(i) density(X[-i],from=X[i],to=X[i],n=1,bw=h,kernel = kernel)$y)
+  F=fhati(1:length(X))
+  return(integrate(function(x) fhat(x)^2,-10^(-5),10^(5))$value-2*mean(F))
+}
+vx=seq(.01,0.3,by=.01)
+vy=Vectorize(J)(vx)
+df=data.frame(vx,vy)
+ggplot(data=df, aes(x=vx, y=vy)) + geom_line()
+
+# estimated density via CV
+h_CV = vx[which(vy==min(vy))]
+estimates = cbind(estimates, kde(kernels[2],h_CV))
+colnames(estimates) = c("normal",kernels,"epanec_CV")
+y_CV = density(X,bw=h_CV,kernel = kernel)$y
+x_CV = density(X,bw=h_CV,kernel = kernel)$x
+```
+
+The objective function as a function of h is plotted above and is minimized at h=0.06. This is a fairly low value for the bandwidth so we expect to have an estimated density that is not very smooth.
+
+
+## 3. Estimated densities Plot
+
+```{r, echo=FALSE}
+
+par(mar = c(5, 4, 4, 4)+0.3)  # Leave space for z axis
+hist(bids,main = "Estimated density of the bids",breaks = 30,ylab = "") 
+par(new = TRUE)
+plot(estimates[,"normal"], type = "l", axes = FALSE, bty = "L", xlab = "", ylab = "", col="red")
+par(new = TRUE)
+plot(estimates[,"gaussian"], type = "l", axes = FALSE, bty = "L", xlab = "", ylab = "", col="blue")
+par(new = TRUE)
+plot(estimates[,"epanechnikov"], type = "l", axes = FALSE, bty = "L", xlab = "", ylab = "",col = "green")
+par(new = TRUE)
+plot(x_CV,y_CV,type = "l", axes = FALSE, bty = "L", xlab = "", ylab = "",col = "orange")
+axis(side=4, at = pretty(range(y_CV)))
+mtext("frequency", side=2, line=3)
+mtext("density", side=4, line=3)
+#par(xpd=TRUE)
+#col <- c(rgb(0.8, 0.3, 0.1),rgb(0.1, 0.3, 0.9),rgb(0.3, 0.8, 0.3),rgb(0.5, 0.2, 0.3))
+#legend("topright", inset=c(-0.2,0),legend=c("n", "g","e", "e CV"), col=col)
+
+```
+The legend og the plot above is as follows:
+\begin{itemize}
+  \item[-] red line = assumed normal distribution with optimal h
+  \item[-] blue line = Gaussian kernel with plug-in rule
+  \item[-] green line = Epanechnikov kernel with plug-in rule
+  \item[-] orange line = LSCV with Epanechnikov kernel
+\end{itemize}
+
+Densities estimated with the plug-in rule appear to attribute to be too high around the center of the distribution where the observations have low frequencies.This is probably due to the large value of the optimal bandwidth $h^* = 0.27$ Instead, density estimated with CV for the Epanechnikov kernel has very low bandwidth $h^* = 0.06$ and therefore it captures the apparent underlying multimodal distribution, but there's reasons to think that this low value of h leads to overfitting. 
+
+## 4. Evaluations implied the bids
+
+```{r}
+#GPV to estimate the bids density 
+G = ecdf(X)
+# interpolate to get pdf and cdf at the actual bids 
+g = approx(x_CV,y_CV,X)$y
+N=3#of bidders
+
+# Valuations
+valuations = X + G(X)/(N-1)*g
+v_pdf = density(valuations, bw = h_CV,kernel = kernels[2])
+```
+
+The plot below are the histograms of bids (light blue) and valuation (light red). We see strong overlap between bids and valuations meaning that the estimated valuations are reasonable.
+
+```{r, echo=FALSE}
+c1 <- rgb(173,216,230,max = 255, alpha = 80, names = "lt.blue")
+c2 <- rgb(255,192,203, max = 255, alpha = 80, names = "lt.pink")
+hgA <- hist(bids,breaks = 30, plot = FALSE) # Save first histogram data
+hgB <- hist(valuations, breaks = 30, plot = FALSE) # Save 2nd histogram data
+
+plot(hgA, col = c1) # Plot 1st histogram using a transparent color
+plot(hgB, col = c2, add = TRUE) # Add 2nd histogram using different color
+```
+
+
+The plot below represent the histogram and the estimated density of the bidders evaluations implied by the bids estimated using the cross-validated Epanechnikov kernel. Also in this case we are probably overfitting the data.
+
+
+```{r, echo=FALSE}
+# Plot estimated valuation density
+par(mar = c(5, 4, 4, 4)+0.3)
+hist(valuations,main = "Estimated density of bidders valuations",breaks = 30,ylab = "") # first plot
+par(new = TRUE)
+plot(v_pdf$x,v_pdf$y,type = "l", axes = FALSE, bty = "n", xlab = "", ylab = "",col="blue")
+axis(side=4, at = pretty(range(v_pdf$y)))
+mtext("frequency", side=2, line=3)
+mtext("density", side=4, line=3)
+```
+
+
+```{r}
+#estimate the bids cdf with h from the plug in rule 
+G = ecdf(X)
+# interpolate to get pdf and cdf at the actual bids 
+g = approx(x_CV,y_CV,X)$y
+N=3#of bidders
+
+# Valuations
+valuations = X + G(X)/(N-1)*g
+
+h_v = dpik(valuations, scalest = "minim")
+v_pdf = density(valuations, bw = h_v,kernel = kernels[2])
+```
+
+The plot below represent the histogram and the estimated density of the bidders evaluations implied by the bids estimated using the Epanechnikov kernel with optimal plug-in bandwidth. Also in this case we are probably underfitting the data cause the estimated deensity does not capture the modes of the underlying distribution.
+
+```{r, echo=FALSE}
+# Plot estimated valuation density
+par(mar = c(5, 4, 4, 4)+0.3)
+hist(valuations,main = "Estimated density of bidders valuations",breaks = 30,ylab = "") # first plot
+par(new = TRUE)
+plot(v_pdf$x,v_pdf$y,type = "l", axes = FALSE, bty = "n", xlab = "", ylab = "",col="blue")
+axis(side=4, at = pretty(range(v_pdf$y)))
+mtext("frequency", side=2, line=3)
+mtext("density", side=4, line=3)
+```
+
+## Guess the valuation distribution
+
+```{r, message=FALSE}
+fit = Mclust(valuations, G=2, model="V")
+hist(valuations,breaks = 30,main = "Mixture of Gaussians",ylab="")
+par(new = TRUE)
+plot(fit, what="density", main="Mixture of Gaussians",axes = FALSE,ylab="")
+rug(X)
+axis(side=4, at = pretty(range(0,0.5)))
+```
+My guess is that the true density of the bidders valuations is a mixture of Gaussians with means around 1.5 and 3 respectively and same variance 1.

@@ -10,11 +10,15 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 library(dplyr)
+library(ggplot2)
+library(binsreg)
+library(gridExtra)
+library(xtable)
 ```
 
-## R Markdown
+## Binned Scatterplot
 
 ```{r,echo=FALSE}
 rm(list=ls())
@@ -26,6 +30,84 @@ data$date = as.Date(paste(data$year, data$month, data$day, sep='-'))
 df = data %>% group_by(date) %>%filter(lmp==max(lmp))
 ```
 
+```{r, echo=FALSE, include=FALSE}
+dfbins=binsreg(df$lmp,df$temp,nbins=30, polyreg=1)
+```
 
 
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+dfbins$bins_plot + ggtitle("Binned Scatter Plot") +
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("maximum price")
+
+```
+
+## Polynomial Regression
+
+```{r, echo = FALSE, results='asis'}
+#models = data.frame(degree = c(1:10), rss = rep("NaN",10))
+list_models = list()
+for (d in 1:10) {
+  list_models[[d]]=lm(df$lmp ~ poly(df$temp,d))
+  #models$rss[d] = round(anova(lm(df$lmp ~ poly(df$temp,d)))["Residuals", "Sum Sq"],0)
+}
+options(xtable.comment = FALSE)
+xtable(do.call(anova, list_models))
+```
+
+
+```{r, echo=FALSE}
+p <- ggplot(df, aes(x = temp, y = lmp)) + geom_point()
+list_plots = list()
+for (d in 1:4) {
+ list_plots[[d]] = p + stat_smooth(method = "lm", formula = y ~ poly(x, degree=d))
+}
+```
+
+
+```{r, echo=FALSE}
+p <- ggplot(df, aes(x = temp, y = lmp)) + geom_point()
+p1 = p + stat_smooth(method = "lm", formula = y ~ poly(x, degree=1))+ ggtitle("d=1")+
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("maximum price")
+p2 = p + stat_smooth(method = "lm", formula = y ~ poly(x, degree=2))+ ggtitle("d=2")+
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("maximum price")
+p4 = p + stat_smooth(method = "lm", formula = y ~ poly(x, degree=4))+ ggtitle("d=4")+
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("maximum price")
+p10 = p + stat_smooth(method = "lm", formula = y ~ poly(x, degree=10))+ ggtitle("d=10")+
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("maximum price")
+plist <- list(p1,p2,p4,p10)
+grid.arrange(grobs=plist, ncol = 2)
+```
+
+## Cross Validation
+
+```{r}
+df = df[,c("lmp","temp")]
+df.shuffled <- df[sample(nrow(df)),]
+K=10; order=10
+folds <- cut(seq(1,nrow(df.shuffled)),breaks=K,labels=FALSE)
+#Creating empty object to hold fit information
+rmse = matrix(NA,nrow=K,ncol=order)
+
+#Perform K-fold cross validation
+for(i in 1:K){
+    #Segement data by fold using the which() function 
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- df.shuffled[testIndexes, ]
+    trainData <- df.shuffled[-testIndexes, ]
+    #Use the test and train data partitions
+    #Model fitting and evaluation
+    for (j in 1:order){
+      #training regression model on training folds
+        fit.train = lm(lmp ~ poly(temp,j), data = trainData)
+        #evaluating fit on the test fold
+            fit.test = predict(fit.train, newdata=testData)
+        rmse[i,j] = sqrt(mean(fit.test - testData$lmp)^2)
+    }
+}
+
+#Averaging fit at each order 
+cvmse <- colMeans(rmse)
+#plotting cross-validated prediction accuracy 
+plot(cvmse, type='l',xlab = "degree",ylab="CV MSE")
+```
 

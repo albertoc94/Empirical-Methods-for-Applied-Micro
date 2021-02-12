@@ -12,10 +12,13 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 library(dplyr)
+library(mgcv)
+library(tidymv)
 library(ggplot2)
 library(binsreg)
 library(gridExtra)
 library(xtable)
+library(splines)
 ```
 
 ## Binned Scatterplot
@@ -27,19 +30,21 @@ data = read.csv(file="nodelmp.csv", header =TRUE)
 
 ```{r, echo=FALSE}
 data$date = as.Date(paste(data$year, data$month, data$day, sep='-'))
-df = data %>% group_by(date) %>%filter(lmp==max(lmp))
+data = data %>% group_by(date) %>%filter(lmp==max(lmp))
 ```
 
 ```{r, echo=FALSE, include=FALSE}
-dfbins=binsreg(df$lmp,df$temp,nbins=30, polyreg=1)
+dfbins=binsreg(data$lmp,data$temp,nbins=30, polyreg=1)
 ```
 
 
 ```{r, echo=FALSE,message=FALSE, warning=FALSE}
-dfbins$bins_plot + ggtitle("Binned Scatter Plot") +
+dfbins$bins_plot + ggtitle("Binned Scatter Plot bins=30") +
              theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("maximum price")
 
 ```
+The simple linear regression without higher order terms is not able to capture the evident U-shaped relationship between temperature and maximum price. In the next section we will test the performance of polynomial regression including terms up the the order 10 and select the optimal degree based on cross-validation.
+
 
 ## Polynomial Regression
 
@@ -47,16 +52,17 @@ dfbins$bins_plot + ggtitle("Binned Scatter Plot") +
 #models = data.frame(degree = c(1:10), rss = rep("NaN",10))
 list_models = list()
 for (d in 1:10) {
-  list_models[[d]]=lm(df$lmp ~ poly(df$temp,d))
+  list_models[[d]]=lm(data$lmp ~ poly(data$temp,d))
   #models$rss[d] = round(anova(lm(df$lmp ~ poly(df$temp,d)))["Residuals", "Sum Sq"],0)
 }
 options(xtable.comment = FALSE)
 xtable(do.call(anova, list_models))
 ```
 
+As we can deduce from the table below we model that perform best in sample is the polynomial regression with degree 10 cause it is the one that minimizes the Residual Sum of Squares. This was expected since more complex models (higher degree) are able to fit the data better than less complex models (lower degree). However, more complex models allow to obtain low in sample bias at the expenses of large variance and therefore are likely to perform poorly on out of sample data. Hence, in the next section we will select the degree of the polynomial regression that best balance the bias-variance trade off via cross validation.
 
-```{r, echo=FALSE}
-p <- ggplot(df, aes(x = temp, y = lmp)) + geom_point()
+```{r, echo=FALSE, include=FALSE}
+p <- ggplot(data, aes(x = temp, y = lmp)) + geom_point()
 list_plots = list()
 for (d in 1:4) {
  list_plots[[d]] = p + stat_smooth(method = "lm", formula = y ~ poly(x, degree=d))
@@ -64,8 +70,8 @@ for (d in 1:4) {
 ```
 
 
-```{r, echo=FALSE}
-p <- ggplot(df, aes(x = temp, y = lmp)) + geom_point()
+```{r, echo=FALSE,include=FALSE}
+p <- ggplot(data, aes(x = temp, y = lmp)) + geom_point()
 p1 = p + stat_smooth(method = "lm", formula = y ~ poly(x, degree=1))+ ggtitle("d=1")+
              theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("maximum price")
 p2 = p + stat_smooth(method = "lm", formula = y ~ poly(x, degree=2))+ ggtitle("d=2")+
@@ -80,34 +86,177 @@ grid.arrange(grobs=plist, ncol = 2)
 
 ## Cross Validation
 
-```{r}
-df = df[,c("lmp","temp")]
-df.shuffled <- df[sample(nrow(df)),]
-K=10; order=10
-folds <- cut(seq(1,nrow(df.shuffled)),breaks=K,labels=FALSE)
-#Creating empty object to hold fit information
-rmse = matrix(NA,nrow=K,ncol=order)
-
-#Perform K-fold cross validation
-for(i in 1:K){
-    #Segement data by fold using the which() function 
-    testIndexes <- which(folds==i,arr.ind=TRUE)
-    testData <- df.shuffled[testIndexes, ]
-    trainData <- df.shuffled[-testIndexes, ]
-    #Use the test and train data partitions
-    #Model fitting and evaluation
-    for (j in 1:order){
-      #training regression model on training folds
-        fit.train = lm(lmp ~ poly(temp,j), data = trainData)
-        #evaluating fit on the test fold
-            fit.test = predict(fit.train, newdata=testData)
-        rmse[i,j] = sqrt(mean(fit.test - testData$lmp)^2)
-    }
-}
+```{r,echo=FALSE, fig.dim=0.25}
+data = data[,c("lmp","temp")]
+source("cross_val.R")
+df=as.list(c(1:10)); K=10
+rmse = cross_val(data, "polyreg", df,K)
 
 #Averaging fit at each order 
-cvmse <- colMeans(rmse)
+cvmse = as.data.frame(cbind(c(1:10),colMeans(rmse)))
+colnames(cvmse) = c("degree","cv_mse")
+p_star = df[[which(cvmse$cv_mse==min(cvmse$cv_mse))]]
+p_star=2
+poly_pred = predict(lm(lmp ~ poly(temp,p_star), data = data))
+poly_res = data$lmp - poly_pred
+
 #plotting cross-validated prediction accuracy 
-plot(cvmse, type='l',xlab = "degree",ylab="CV MSE")
+ggplot(cvmse, aes(x=degree,y=cv_mse)) + geom_line() + xlab("degree") + ylab("cv mse") + ggtitle("Polynomial Regression")+
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold'))
 ```
+The cross validated mean squared error (CVMSE) is minimized at degree 5. However, the difference between the estimated CVMSE between degree 2 and degree 5 is considerably small. Therefore we have reasons to choose the simpler model (degree 2) over the more complex model (degree 5).
+
+## Predicted vs. Actual Prices
+
+```{r, echo=FALSE}
+poly_deg = c(1,p_star,5,10)
+pred_lmp = matrix(NA,nrow(data),ncol=length(poly_deg))
+for (i in 1:4) {
+  model_cv = lm(lmp ~ poly(temp,poly_deg[i]), data = data)
+  pred_lmp[,i] = predict(model_cv)
+}
+pred_lmp = as.data.frame(pred_lmp)
+pred_lmp = cbind.data.frame(pred_lmp,data)
+colnames(pred_lmp) = c("degree1","degree2","degree5","degree10","lmp","temp")
+p1 = ggplot(pred_lmp, aes(temp, y = value, color = variable)) + 
+    geom_point(aes(y = lmp, col = "actual"),size=1) + 
+    geom_line(aes(y = degree1, col = "pred"),size=1) + ggtitle("degree=1") +
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("price")
+p2 = ggplot(pred_lmp, aes(temp, y = value, color = variable)) + 
+    geom_point(aes(y = lmp, col = "actual"),size=1) + 
+    geom_line(aes(y = degree2, col = "pred"),size=1) + ggtitle("degree=2 (cv)")+
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("price")
+p5 = ggplot(pred_lmp, aes(temp, y = value, color = variable)) + 
+    geom_point(aes(y = lmp, col = "actual"),size=1) + 
+    geom_line(aes(y = degree5, col = "pred"),size=1) + ggtitle("degree=5")+
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("price")
+p10 = ggplot(pred_lmp, aes(temp, y = value, color = variable)) + 
+    geom_point(aes(y = lmp, col = "actual"),size=1) + 
+    geom_line(aes(y = degree10, col = "pred"),size=1) + ggtitle("degree=10")+
+             theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + xlab("temperature") + ylab("price")
+
+plist <- list(p1,p2,p5,p10)
+grid.arrange(grobs=plist, ncol = 2)
+```
+
+The plot above shows the predicted versus actual maximum prices for the polynomial regression models with degree 1,2,5 and 10. As we can notice the model selected after cross validation (degree 2) is capturing the U-shaped relationship mentioned above, whereas the model that minimizes the cross validated MSE is not adding anything apart from being more flexible at fitting the data at the boundaries of temperature levels. 
+
+## Natural Cubic Splines
+
+```{r, echo=FALSE}
+data = data[,c("lmp","temp")]
+source("cross_val.R")
+df=as.list(c(1:10)); K=10
+rmse = cross_val(data, "spline", df,K)
+
+#Averaging fit at each order 
+cvmse = as.data.frame(cbind(c(1:length(df)),colMeans(rmse)))
+colnames(cvmse) = c("knots","cv_mse")
+k_star = df[[which(cvmse$cv_mse==min(cvmse$cv_mse))]]
+ns_pred = predict(lm(lmp ~ ns(temp, df = k_star+2), data = data))
+ns_res = data$lmp - ns_pred
+
+#plotting cross-validated prediction accuracy 
+ggplot(cvmse, aes(x=knots,y=cv_mse)) + geom_line() + xlab("knots") + ylab("cv mse") + ggtitle("Natural Cubic Splines")+ theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold'))
+```
+
+The cross validated MSE is unambiguously minimized at 3 knots. Therefore, the 4 regions where a polynomial of degree 3 is fitted corresponds to the for percentiles of the sample.
+
+## LOESS
+
+```{r, echo=FALSE}
+#DO NOT RUN
+data = data[,c("lmp","temp")]
+source("cross_val.R")
+df=as.list(seq(0.1, 1, by=0.1 )); K=10
+rmse = cross_val(data, "loess", df,K)
+
+#Averaging fit at each order 
+cvmse = as.data.frame(cbind(seq(0.1, 1, by=0.1 ),colMeans(rmse)))
+colnames(cvmse) = c("span","cv_mse")
+s_star = df[[which(cvmse$cv_mse==min(cvmse$cv_mse))]]
+s_star = 0.75
+loess_pred = predict(loess(lmp ~ temp, span = s_star, data = data))
+loess_res = data$lmp - loess_pred
+#plotting cross-validated prediction accuracy 
+ggplot(cvmse, aes(x=span,y=cv_mse)) + geom_line() + xlab("span") + ylab("cv mse") + ggtitle("Loess")+ theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold'))
+```
+The cross validated MSE is unambiguously minimized at span 0.4, but since the function is flat round that point we will choose 0.75 as the optimal value of the span.
+
+## Compare Predictions
+
+```{r, echo=FALSE}
+predictions = as.data.frame(cbind(data$temp,data$lmp,poly_pred,ns_pred,loess_pred))
+colnames(predictions) = c("temp","lmp","poly_pred","ns_pred","loess_pred")
+ggplot(predictions, aes(x=temp,y=lmp)) + geom_point(size=1) +
+  geom_line(aes(x=temp,y = poly_pred,col="red"),size=1) + 
+  geom_line(aes(x=temp,y = ns_pred,col="blue"),size=1) +
+  geom_line(aes(x=temp,y = loess_pred,col="green"),size=1) + scale_color_discrete(name = "models", labels = c("poly_reg", "spline", "local_reg")) 
+
+```
+
+The plot above represents the predicted relationship between temperature and maximum local marginal price. The simpler model is the polynomial regression and is able to capture the U-shaped relationship that we see in the data, while the other two more complex model (natural cubic spline with 3 knots and local regression with span=0.75) are also capturing some local non-linear relationship the we can observe in each of the 4 percentiles of the sample.
+
+## Compare Residuals
+
+```{r, echo=FALSE}
+residuals = as.data.frame(cbind(data$temp,poly_res,ns_res,loess_res))
+colnames(residuals) = c("temp","poly_res","ns_res","loess_res")
+g1 = ggplot(residuals, aes(x=temp,y=poly_res)) + geom_point(size=1)+ ggtitle("Poly Reg")+ theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + ylab("residuals")
+g2 = ggplot(residuals, aes(x=temp,y=ns_res)) + geom_point(size=1)+ ggtitle("Spline")+ theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + ylab("residuals")
+g3 = ggplot(residuals, aes(x=temp,y=loess_res)) + geom_point(size=1)+ ggtitle("Loess")+ theme(plot.title=element_text(hjust=0.5, vjust=0.5, face='bold')) + ylab("residuals")
+
+plist <- list(g1,g2,g3)
+grid.arrange(grobs=plist, ncol = 3)
+```
+
+The residual plots look very similar across the three models and they fit all the parts of the distribution equally well. Hence, we would not be able to tell which model perform best based on this plot. Also the cross validated MSE values for the three models are quite similar.  
+
+
+## Appendix: Cross validation function
+
+```{r, eval=FALSE}
+cross_val = function(data,model,df,K){
+  
+  #df = degrees of freedom (eg degrees of the polynomial or knots)
+  #set.seed(1)
+  data.shuffled <- data[sample(nrow(data)),]
+  folds <- cut(seq(1,nrow(data.shuffled)),breaks=K,labels=FALSE)
+  #Creating empty object to hold fit information
+  rmse = matrix(NA,nrow=K,ncol=length(df))
+  for(i in 1:K){
+    #Segement data by fold using the which() function 
+    testIndexes <- which(folds==i,arr.ind=TRUE)
+    testData <- data.shuffled[testIndexes, ]
+    trainData <- data.shuffled[-testIndexes, ]
+    #Use the test and train data partitions
+    #Model fitting and evaluation
+    for (j in 1:length(df)){
+      d = df[[j]]
+      #training regression model on training folds
+      if(model == "polyreg"){
+        fit.train = lm(lmp ~ poly(temp,d), data = trainData)
+      }
+      if(model == "spline"){
+        fit.train = lm(lmp ~ ns(temp, df = d+2), data = trainData)
+      }
+      if(model == "loess"){
+        fit.train = loess(lmp ~ temp, span = d, data = trainData)
+      }
+      #evaluating fit on the test fold
+      fit.test = predict(fit.train, newdata=testData)
+      rmse[i,j] = sqrt(mean(na.omit(fit.test - testData$lmp)^2))
+    }
+  }
+  return(rmse)
+}
+```
+
+
+
+
+
+
+
+
 

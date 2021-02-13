@@ -1,0 +1,22 @@
+---
+title: "Empirical Methods for Applied Micro"
+subtitle: "Problem Set 3"
+author: "Alberto Cappello"
+date: "2/13/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+```
+
+## Binned Scatterplot
+
+```{r,echo=FALSE}
+rm(list=ls())
+data = read.csv(file="boston_cl.csv", header =TRUE)
+```

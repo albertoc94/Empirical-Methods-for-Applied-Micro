@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 library(ggplot2)
+library(corrplot)
 ```
 
 ## Binned Scatterplot
@@ -20,3 +21,11 @@ library(ggplot2)
 rm(list=ls())
 data = read.csv(file="boston_cl.csv", header =TRUE)
 ```
+
+## How correlated are the variables?
+
+```{r}
+M <- cor(data)
+corrplot.mixed(M, lower.col = "black", number.cex = .7)
+```
+

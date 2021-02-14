@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 library(ggplot2)
 library(corrplot)
-library(caret)
+library(glmnet)
 ```
 
 ## Binned Scatterplot
@@ -24,13 +24,20 @@ data = read.csv(file="boston_cl.csv", header =TRUE)
 data = subset(data, select = -c(X))
 cols = setdiff(names(data),"chas")
 source("normalize.R")
-data_scaled = normalize(data[,cols],2)
-data_scaled = cbind(data_scaled,data$chas)
+#data_scaled = normalize(data[,cols],2)
+#data_scaled = cbind(data_scaled,data$chas)
+#data=datascaled
 colnames = c(cols,"chas")
-colnames(data_scaled) = c(colnames)
+colnames(data) = c(colnames)
 testIndexes = sample(floor(0.2*nrow(data)))
-data_test = data_scaled[testIndexes,]
-data_train = data_scaled[-testIndexes,]
+data_test = data[testIndexes,]
+data_train = data[-testIndexes,]
+x_col = setdiff(names(data_test),"medv")
+x_test = as.matrix(data_test[,x_col])
+y_test = as.matrix(data_test[,"medv"])
+x_train = as.matrix(data_train[,x_col])
+y_train = as.matrix(data_train[,"medv"])
+
 ```
 
 ## 1. How correlated are the variables?
@@ -45,12 +52,46 @@ corrplot.mixed(M, lower.col = "black", number.cex = .7)
 
 ## 3. LASSO Regression
 
-```{r}
+```{r, echo=FALSE}
+# for LASSO we need to set alpha=1
+lasso_output <- cv.glmnet(x_train, y_train,alpha = 1, nfolds = 10, type.measure="mse")
+lasso_df = as.data.frame(cbind(lasso_output$lambda,lasso_output$cvm))
+names(lasso_df) = c("lambda","cv_mse")
+lasso_subset_df = lasso_df[abs(lasso_df$cv_mse - min(lasso_df$cv_mse)) < sd(lasso_df$cv_mse),]
+best_lam = max(lasso_subset_df$lambda)
+ggplot(lasso_df,aes(x=lambda,y=cv_mse)) + geom_line(size=1) + geom_vline(xintercept = best_lam, linetype="dotted", 
+                color = "red", size=1.5)
 
 ```
 
+```{r, echo=FALSE}
+lasso_best <- glmnet(x_train, y_train, alpha = 1, lambda = best_lam)
+pred <- predict(lasso_best, s = best_lam, newx = x_test)
+df = as.data.frame(cbind(x_test,y_test,pred))
+colnames(df) = c(x_col,"y_test","pred")
+ggplot(df,aes(x=y_test,y=pred)) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+```
 
 ## 3. Ridge Regression
+
+```{r, echo=FALSE}
+# for Ridge we need to set alpha=0
+ridge_output <- cv.glmnet(x_train, y_train,alpha = 0, nfolds = 10, type.measure="mse")
+ridge_df = as.data.frame(cbind(ridge_output$lambda,ridge_output$cvm))
+names(ridge_df) = c("lambda","cv_mse")
+ridge_subset_df = ridge_df[abs(ridge_df$cv_mse - min(ridge_df$cv_mse)) < sd(ridge_df$cv_mse),]
+best_lam = max(ridge_subset_df$lambda)
+ggplot(ridge_df,aes(x=lambda,y=cv_mse)) + geom_line(size=1) + geom_vline(xintercept = best_lam, linetype="dotted", 
+                color = "red", size=1.5)
+```
+
+```{r, echo=FALSE}
+ridge_best <- glmnet(x_train, y_train, alpha = 0, lambda = best_lam)
+pred <- predict(ridge_best, s = best_lam, newx = x_test)
+df = as.data.frame(cbind(x_test,y_test,pred))
+colnames(df) = c(x_col,"y_test","pred")
+ggplot(df,aes(x=y_test,y=pred)) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+```
 
 
 ## 4. LASSO on expanded data set

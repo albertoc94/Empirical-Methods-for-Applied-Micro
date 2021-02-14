@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 library(ggplot2)
 library(corrplot)
+library(caret)
 ```
 
 ## Binned Scatterplot
@@ -20,12 +21,46 @@ library(corrplot)
 ```{r,echo=FALSE}
 rm(list=ls())
 data = read.csv(file="boston_cl.csv", header =TRUE)
+data = subset(data, select = -c(X))
+cols = setdiff(names(data),"chas")
+source("normalize.R")
+data_scaled = normalize(data[,cols],2)
+data_scaled = cbind(data_scaled,data$chas)
+colnames = c(cols,"chas")
+colnames(data_scaled) = c(colnames)
+testIndexes = sample(floor(0.2*nrow(data)))
+data_test = data_scaled[testIndexes,]
+data_train = data_scaled[-testIndexes,]
 ```
 
-## How correlated are the variables?
+## 1. How correlated are the variables?
 
-```{r}
+```{r, echo=FALSE}
 M <- cor(data)
 corrplot.mixed(M, lower.col = "black", number.cex = .7)
 ```
+
+## 2. Estimate the original HR
+
+
+## 3. LASSO Regression
+
+```{r}
+
+```
+
+
+## 3. Ridge Regression
+
+
+## 4. LASSO on expanded data set
+
+
+## Models' evaluation
+
+
+
+
+
+
 

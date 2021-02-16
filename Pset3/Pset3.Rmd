@@ -15,21 +15,24 @@ library(ggplot2)
 library(corrplot)
 library(glmnet)
 library(gridExtra)
+library(xtable)
 ```
 
-## Binned Scatterplot
 
 ```{r,echo=FALSE}
 rm(list=ls())
 data = read.csv(file="boston_cl.csv", header =TRUE)
 data = subset(data, select = -c(X))
-cols = setdiff(names(data),"chas")
+data2 = data^2
+#cols = setdiff(names(data),"chas")
+names(data2) = paste(names(data),"sq", sep = "_")
+data2 = subset(data2, select = -c(chas_sq,medv_sq))
 #source("normalize.R")
 #data_scaled = normalize(data[,cols],2)
 #data_scaled = cbind(data_scaled,data$chas)
 #data=datascaled
-colnames = c(cols,"chas")
-colnames(data) = c(colnames)
+#colnames = c(cols,"chas")
+#colnames(data) = c(colnames)
 testIndexes = sample(floor(0.2*nrow(data)))
 data_test = data[testIndexes,]
 data_train = data[-testIndexes,]
@@ -50,6 +53,21 @@ corrplot.mixed(M, lower.col = "black", number.cex = .7)
 
 ## 2. Estimate the original HR
 
+```{r, echo=FALSE}
+data_HR = data
+data_HR$nox = data_HR$nox^2
+data_HR$rm = data_HR$rm^2
+testIndexes = sample(floor(0.2*nrow(data)))
+source("lm_HR.R") 
+lm_HR = lm_HR(data_HR,testIndexes)
+y_pred = lm_HR[["y_pred"]]; lm_HR = lm_HR[["df_lr"]]
+df_results = as.data.frame(cbind(0,lm_HR$mse_train,lm_HR$mse_test))
+names(df_results) = c("lambda","mse_cv","mse_test")
+df_lr=as.data.frame(cbind(y_test,y_pred)); names(df_lr) = c("y_test","y_pred")
+ggplot(df_lr,aes(x=y_test,y=exp(y_pred))) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+```
+
+
 
 ## 3. LASSO Regression
 
@@ -57,9 +75,10 @@ corrplot.mixed(M, lower.col = "black", number.cex = .7)
 # for LASSO we need to set alpha=1
 lasso_output <- cv.glmnet(x_train, y_train,alpha = 1, nfolds = 10, type.measure="mse")
 lasso_df = as.data.frame(cbind(lasso_output$lambda,lasso_output$cvm))
-names(lasso_df) = c("lambda","cv_mse")
-lasso_subset_df = lasso_df[abs(lasso_df$cv_mse - min(lasso_df$cv_mse)) < sd(lasso_df$cv_mse),]
+names(lasso_df) = c("lambda","mse_cv")
+lasso_subset_df = lasso_df[abs(lasso_df$mse_cv - min(lasso_df$mse_cv)) < sd(lasso_df$mse_cv),]
 best_lam = max(lasso_subset_df$lambda)
+idx = which.max(lasso_subset_df$lambda)
 #ggplot(lasso_df,aes(x=lambda,y=cv_mse)) + geom_line(size=1) + geom_vline(xintercept = best_lam, linetype="dotted", color = "red", size=1.5)
 plot(lasso_output)
 plot(lasso_output$glmnet.fit, "lambda")
@@ -70,6 +89,8 @@ plot(lasso_output$glmnet.fit, "lambda")
 ```{r, echo=FALSE}
 lasso_best <- glmnet(x_train, y_train, alpha = 1, lambda = best_lam)
 y_pred <- predict(lasso_best, s = best_lam, newx = x_test)
+mse_test = mean((y_test-y_pred)^2)
+df_results = as.data.frame(rbind(df_results,cbind(lasso_subset_df[idx,],mse_test)))
 df = as.data.frame(cbind(x_test,y_test,y_pred))
 colnames(df) = c(x_col,"y_test","y_pred")
 ggplot(df,aes(x=y_test,y=y_pred)) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
@@ -82,9 +103,10 @@ ggplot(df,aes(x=y_test,y=y_pred)) + geom_point(size=1) + xlab("actual house pric
 # for Ridge we need to set alpha=0
 ridge_output <- cv.glmnet(x_train, y_train,alpha = 0, nfolds = 10, type.measure="mse")
 ridge_df = as.data.frame(cbind(ridge_output$lambda,ridge_output$cvm))
-names(ridge_df) = c("lambda","cv_mse")
-ridge_subset_df = ridge_df[abs(ridge_df$cv_mse - min(ridge_df$cv_mse)) < sd(ridge_df$cv_mse),]
+names(ridge_df) = c("lambda","mse_cv")
+ridge_subset_df = ridge_df[abs(ridge_df$mse_cv - min(ridge_df$mse_cv)) < sd(ridge_df$mse_cv),]
 best_lam = max(ridge_subset_df$lambda)
+idx = which.max(ridge_subset_df$lambda)
 #ggplot(ridge_df,aes(x=lambda,y=cv_mse)) + geom_line(size=1) + geom_vline(xintercept = best_lam, linetype="dotted", color = "red", size=1.5)
 
 plot(ridge_output)
@@ -94,6 +116,8 @@ plot(ridge_output$glmnet.fit, "lambda")
 ```{r, echo=FALSE}
 ridge_best <- glmnet(x_train, y_train, alpha = 0, lambda = best_lam)
 y_pred <- predict(ridge_best, s = best_lam, newx = x_test)
+mse_test = mean((y_test-y_pred)^2)
+df_results = as.data.frame(rbind(df_results,cbind(ridge_subset_df[idx,],mse_test)))
 df = as.data.frame(cbind(x_test,y_test,y_pred))
 colnames(df) = c(x_col,"y_test","y_pred")
 ggplot(df,aes(x=y_test,y=y_pred)) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
@@ -102,9 +126,45 @@ ggplot(df,aes(x=y_test,y=y_pred)) + geom_point(size=1) + xlab("actual house pric
 
 ## 4. LASSO on expanded data set
 
+```{r, echo=FALSE}
+data_ext = as.data.frame(cbind(data,data2))
+testIndexes = sample(floor(0.2*nrow(data)))
+data2_test = data2[testIndexes,]
+data2_train = data2[-testIndexes,]
+x_col2 = setdiff(names(data2_test),"medv")
+x_test2 = as.matrix(data2_test[,x_col2])
+x_train2 = as.matrix(data2_train[,x_col2])
+# for LASSO we need to set alpha=1
+lasso2_output <- cv.glmnet(x_train2, y_train,alpha = 1, nfolds = 10, type.measure="mse")
+lasso2_df = as.data.frame(cbind(lasso2_output$lambda,lasso2_output$cvm))
+names(lasso2_df) = c("lambda","mse_cv")
+lasso2_subset_df = lasso2_df[abs(lasso2_df$mse_cv - min(lasso2_df$mse_cv)) < sd(lasso2_df$mse_cv),]
+best_lam2 = max(lasso2_subset_df$lambda)
+idx = which.max(lasso2_subset_df$lambda)
+#ggplot(lasso_df,aes(x=lambda,y=cv_mse)) + geom_line(size=1) + geom_vline(xintercept = best_lam, linetype="dotted", color = "red", size=1.5)
+plot(lasso2_output)
+plot(lasso2_output$glmnet.fit, "lambda")
+```
 
-## Models' evaluation
+```{r, echo=FALSE}
+lasso2_best <- glmnet(x_train2, y_train, alpha = 1, lambda = best_lam2)
+y_pred2 <- predict(lasso2_best, s = best_lam2, newx = x_test2)
+mse_test = mean((y_test-y_pred2)^2)
+df_results = as.data.frame(rbind(df_results,cbind(lasso2_subset_df[idx,],mse_test)))
+df2 = as.data.frame(cbind(x_test2,y_test,y_pred2))
+colnames(df2) = c(x_col2,"y_test","y_pred")
+ggplot(df2,aes(x=y_test,y=y_pred2)) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+```
 
+
+## 5. Models' evaluation
+
+```{r, echo=FALSE, results='asis'}
+colnames(df_results) = c("lambda", "cv mse", "test mse")
+options(xtable.comment = FALSE)
+print(xtable(df_results), include.rownames=FALSE)
+
+```
 
 
 

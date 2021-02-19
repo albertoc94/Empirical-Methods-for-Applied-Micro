@@ -13,7 +13,7 @@ lm_HR = function(data,testIndexes){
   y_pred = predict(output_lr, newdata=as.data.frame(x_test))
   mse_test = sqrt(mean((y_pred-y_test)^2))
   df_lr = as.data.frame(cbind(mse_train,mse_test))
-  lm_HR = list(y_pred,df_lr)
-  names(lm_HR) = c("y_pred","df_lr")
+  lm_HR = list(output_lr,y_pred,df_lr)
+  names(lm_HR) = c("output_lr","y_pred","df_lr")
   return(lm_HR)
 }

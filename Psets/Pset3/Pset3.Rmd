@@ -20,13 +20,15 @@ library(xtable)
 
 
 ```{r,echo=FALSE}
+# CREATE DATASETS
 rm(list=ls())
 data = read.csv(file="boston_cl.csv", header =TRUE)
 data = subset(data, select = -c(X))
-data2 = data^2
+data2 = data^2 # these will be used in section 5
 #cols = setdiff(names(data),"chas")
 names(data2) = paste(names(data),"sq", sep = "_")
 data2 = subset(data2, select = -c(chas_sq,medv_sq))
+data2 = as.data.frame(cbind(data,data2))
 #source("normalize.R")
 #data_scaled = normalize(data[,cols],2)
 #data_scaled = cbind(data_scaled,data$chas)
@@ -51,28 +53,34 @@ M <- cor(data)
 corrplot.mixed(M, lower.col = "black", number.cex = .7)
 ```
 
+Several variable like \textit{indus}, \textit{nox},\textit{stat} and \textit{tax} show high degree of correlation with most of the other variables. Therefore if we run a simple linear regression many coefficients may be poorly identified because of the high multicollinearity across variables.
+
+
 ## 2. Estimate the original HR
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, results='asis'}
 data_HR = data
 data_HR$nox = data_HR$nox^2
 data_HR$rm = data_HR$rm^2
 testIndexes = sample(floor(0.2*nrow(data)))
 source("lm_HR.R") 
 lm_HR = lm_HR(data_HR,testIndexes)
-y_pred = lm_HR[["y_pred"]]; lm_HR = lm_HR[["df_lr"]]
-df_results = as.data.frame(cbind(0,lm_HR$mse_train,lm_HR$mse_test))
+y_pred = lm_HR[["y_pred"]]; df_lr = lm_HR[["df_lr"]]
+df_results = as.data.frame(cbind(0,df_lr$mse_train,df_lr$mse_test))
 names(df_results) = c("lambda","mse_cv","mse_test")
-df_lr=as.data.frame(cbind(y_test,y_pred)); names(df_lr) = c("y_test","y_pred")
-ggplot(df_lr,aes(x=y_test,y=exp(y_pred))) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+lr_eval=as.data.frame(cbind(y_test,y_pred)); names(lr_eval) = c("y_test","y_pred")
+ggplot(lr_eval,aes(x=y_test,y=exp(y_pred))) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+output_lr = lm_HR[["output_lr"]]
+options(xtable.comment = FALSE)
+xtable(summary(output_lr)$coefficients)
 ```
-
+As one can see from the table above most of the estimated coefficients are close to zero apart from \textit{lstat} which is quite large and statistically significant coefficient. Not surprisingly \textit{lstat} is highly correlated with all the other variables in our dataset, so probably the coefficient is poorly estimated due to the multicollinearity problem.
 
 
 ## 3. LASSO Regression
 
 ```{r, echo=FALSE}
-# for LASSO we need to set alpha=1
+# set alpha=1 for LASSO penalty
 lasso_output <- cv.glmnet(x_train, y_train,alpha = 1, nfolds = 10, type.measure="mse")
 lasso_df = as.data.frame(cbind(lasso_output$lambda,lasso_output$cvm))
 names(lasso_df) = c("lambda","mse_cv")
@@ -84,9 +92,10 @@ plot(lasso_output)
 plot(lasso_output$glmnet.fit, "lambda")
 ```
 
-## Predicted vs. Actual values
+As one ca see from the plots above under the optimal value of $\lambda = 0.875$ (i.e. the maximum value of lambda among those value such that the estimated MSE is within 1 std from the minimum MSE) 8 out of 13 coefficients are shrunk to zero. 
 
-```{r, echo=FALSE}
+
+```{r, echo=FALSE, results='asis'}
 lasso_best <- glmnet(x_train, y_train, alpha = 1, lambda = best_lam)
 y_pred <- predict(lasso_best, s = best_lam, newx = x_test)
 mse_test = mean((y_test-y_pred)^2)
@@ -94,13 +103,17 @@ df_results = as.data.frame(rbind(df_results,cbind(lasso_subset_df[idx,],mse_test
 df = as.data.frame(cbind(x_test,y_test,y_pred))
 colnames(df) = c(x_col,"y_test","y_pred")
 ggplot(df,aes(x=y_test,y=y_pred)) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+df_coeff = as.data.frame(cbind(output_lr$coefficients,as.matrix(rbind(lasso_best$a0,lasso_best$beta))))
+names(df_coeff) = c("HR", "LASSO")
+options(xtable.comment = FALSE)
+xtable(df_coeff)
 ```
-
+From the table above we notice that there are 3 variables that are the most relevant to estimate the dependent variable: \textit{lstat}, \textit{rm} and \textit{ptratio}. Simple linear regression in the HR model was underestimating the impact of these variables. LASSO regression allow us to largely improve our predictions on the test set as we can observe from the scatterplot above.
 
 ## 3. Ridge Regression
 
 ```{r, echo=FALSE}
-# for Ridge we need to set alpha=0
+# set alpha=0 for the Ridge penalty
 ridge_output <- cv.glmnet(x_train, y_train,alpha = 0, nfolds = 10, type.measure="mse")
 ridge_df = as.data.frame(cbind(ridge_output$lambda,ridge_output$cvm))
 names(ridge_df) = c("lambda","mse_cv")
@@ -113,7 +126,9 @@ plot(ridge_output)
 plot(ridge_output$glmnet.fit, "lambda")
 ```
 
-```{r, echo=FALSE}
+In this case the cross validated value of the penalization parameter is larger than under LASSO, but the estimated MSE is very close to the one obtained with LASSO regression. AS expected most of the coefficient are shrunk towards zero, but not exactly zero.
+
+```{r, echo=FALSE, results='asis'}
 ridge_best <- glmnet(x_train, y_train, alpha = 0, lambda = best_lam)
 y_pred <- predict(ridge_best, s = best_lam, newx = x_test)
 mse_test = mean((y_test-y_pred)^2)
@@ -121,8 +136,12 @@ df_results = as.data.frame(rbind(df_results,cbind(ridge_subset_df[idx,],mse_test
 df = as.data.frame(cbind(x_test,y_test,y_pred))
 colnames(df) = c(x_col,"y_test","y_pred")
 ggplot(df,aes(x=y_test,y=y_pred)) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+df_coeff = as.data.frame(cbind(df_coeff,as.matrix(rbind(ridge_best$a0,ridge_best$beta))))
+names(df_coeff) = c("HR", "LASSO","RIDGE")
+options(xtable.comment = FALSE)
+xtable(df_coeff)
 ```
-
+The estimated coefficients are quite different compared to LASSO. \textit{lstat} is still the variable with the largest coefficient, but under Ridge regression also \textit{black}, \textit{rm} and \textit{chas} are well above zero in absolute value while being zero under LASSO. However, the scatterplot looks very similar to the one obtained with LASSO, so the benefit in the terms of prediction accuracy that we get relaxing the penalization is negligible. (Recall that Ridge tend to shrink coefficients to zero, whereas LASSO perform variable selection).
 
 ## 4. LASSO on expanded data set
 
@@ -146,7 +165,9 @@ plot(lasso2_output)
 plot(lasso2_output$glmnet.fit, "lambda")
 ```
 
-```{r, echo=FALSE}
+In these case at the cross validated $\lambda$ of LASSO under the extended dataset is much larger than that of LASSO on the original dataset without squared terms. Most of the coefficients are shrunk to zero, but more than one coefficient survive the penalization: \textit{lstat} is the largest in absolute terms, but also \textit{ptratio}, \textit{black} and \textit{$rm^2$} are well above zero. 
+
+```{r, echo=FALSE, warning=FALSE, results='asis'}
 lasso2_best <- glmnet(x_train2, y_train, alpha = 1, lambda = best_lam2)
 y_pred2 <- predict(lasso2_best, s = best_lam2, newx = x_test2)
 mse_test = mean((y_test-y_pred2)^2)
@@ -154,15 +175,25 @@ df_results = as.data.frame(rbind(df_results,cbind(lasso2_subset_df[idx,],mse_tes
 df2 = as.data.frame(cbind(x_test2,y_test,y_pred2))
 colnames(df2) = c(x_col2,"y_test","y_pred")
 ggplot(df2,aes(x=y_test,y=y_pred2)) + geom_point(size=1) + xlab("actual house price") + ylab("predicted house price")
+temp = as.matrix(rbind(lasso2_best$a0,lasso2_best$beta))
+df_coeff = round(as.data.frame(as.matrix(rbind(lasso2_best$a0,lasso2_best$beta))[abs(temp)>10^(-3)]),3)
+rownames(df_coeff) = rownames(temp)[abs(temp)>10^(-3)]; rownames(df_coeff)[1]=c("intercept")
+names(df_coeff) = c("LASSO2")
+options(xtable.comment = FALSE)
+xtable(df_coeff)
 ```
 
+Altough the estimated MSE is slightly lower than the one under original LASSO, the performance on the test set is much worse. This is probably due to the fact that the squared terms are making the multicollinearity problem worse and the selected penalization terms is not enough to shrunk to zero some of the coefficients that actually survive.
 
-## 5. Models' evaluation
+## 5. Models' comparison
+
+If we use the test set MSE to compare the models discussed above, the best model is LASSO.
 
 ```{r, echo=FALSE, results='asis'}
 colnames(df_results) = c("lambda", "cv mse", "test mse")
+row.names(df_results) = c("original HR","LASSO","Ridge","LASSO 2")
 options(xtable.comment = FALSE)
-print(xtable(df_results), include.rownames=FALSE)
+print(xtable(df_results))
 
 ```
 
